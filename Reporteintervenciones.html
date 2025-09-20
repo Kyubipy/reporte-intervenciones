@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Reporte de Intervenciones</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.39.3/dist/umd/supabase.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        #app-content { display: none; } /* Ocultar contenido por defecto */
+        #password-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.8);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+        }
+        .table-cell { padding: 12px 16px; border-bottom: 1px solid #e5e7eb; }
+        .table-header { background-color: #f9fafb; font-weight: 600; color: #374151; }
+    </style>
+</head>
+<body class="bg-gray-50 text-gray-800">
+
+    <div id="password-overlay">
+        <div class="bg-white p-8 rounded-lg shadow-xl text-center">
+            <h2 class="text-xl font-bold mb-4">Acceso Restringido</h2>
+            <p class="text-gray-600 mb-4">Por favor, introduce la contraseña para continuar.</p>
+            <input type="password" id="password-input" class="form-input w-full px-3 py-2 border border-gray-300 rounded-md" placeholder="Contraseña">
+            <button id="password-submit" class="mt-4 w-full bg-indigo-600 text-white py-2 rounded-md hover:bg-indigo-700">Entrar</button>
+            <p id="password-error" class="text-red-500 text-sm mt-2 hidden">Contraseña incorrecta.</p>
+        </div>
+    </div>
+
+    <div id="app-content">
+        <div class="container mx-auto p-4 md:p-8">
+            <header class="text-center mb-8">
+                <h1 class="text-3xl md:text-4xl font-bold text-gray-900">Reporte de Intervenciones en Tiempo Real</h1>
+                <p id="report-user-info" class="text-gray-600 mt-2">Mostrando reporte para el usuario: <span class="font-semibold">Cargando...</span></p>
+            </header>
+
+            <div id="main-content">
+                <div class="bg-white rounded-xl shadow-md overflow-hidden">
+                    <div class="overflow-x-auto">
+                        <table class="min-w-full divide-y divide-gray-200">
+                            <thead class="table-header">
+                                <tr>
+                                    <th scope="col" class="table-cell text-left text-sm">Fecha de Actuación</th>
+                                    <th scope="col" class="table-cell text-left text-sm">Nombre de Causa/Caso</th>
+                                    <th scope="col" class="table-cell text-left text-sm">Intervenidos</th>
+                                    <th scope="col" class="table-cell text-left text-sm">Encargado/s</th>
+                                    <th scope="col" class="table-cell text-left text-sm">OBSERVACIONES</th>
+                                    <th scope="col" class="table-cell text-left text-sm">Prueba Multimedia</th>
+                                </tr>
+                            </thead>
+                            <tbody id="report-table-body" class="bg-white divide-y divide-gray-200">
+                                </tbody>
+                        </table>
+                    </div>
+                </div>
+                <p id="no-data-message" class="text-center text-gray-500 py-10 hidden">No hay intervenciones registradas para este usuario.</p>
+            </div>
+            
+            <div id="error-message" class="hidden text-center mt-10">
+                <div class="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded-lg relative" role="alert">
+                    <strong class="font-bold">Error:</strong>
+                    <span class="block sm:inline">No se ha especificado un ID de usuario.</span>
+                    <p class="text-sm mt-2">Por favor, asegúrate de que el link contenga `?userId=SU_ID_DE_USUARIO` al final.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // CONFIGURACIÓN DE SUPABASE
+        const SUPABASE_URL = 'https://wyxrtqudbjbwwlmqlrbc.supabase.co';
+        const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Ind5eHJ0cXVkYmpid3dsbXFscmJjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTgyOTc2ODcsImV4cCI6MjA3Mzg3MzY4N30.vV0m-2D9Hod6t3CwW9ggFlgmMewlF0SaeuC2horX8fs';
+        
+        const CORRECT_PASSWORD = "admin";
+        
+        // Inicializar Supabase
+        const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+        // Referencias a elementos del DOM
+        const passwordOverlay = document.getElementById('password-overlay');
+        const passwordInput = document.getElementById('password-input');
+        const passwordSubmit = document.getElementById('password-submit');
+        const passwordError = document.getElementById('password-error');
+        const appContent = document.getElementById('app-content');
+        const reportTableBody = document.getElementById('report-table-body');
+        const noDataMessage = document.getElementById('no-data-message');
+        const errorMessage = document.getElementById('error-message');
+        const mainContent = document.getElementById('main-content');
+        const reportUserInfo = document.getElementById('report-user-info').querySelector('span');
+
+        function getUserIdFromUrl() {
+            const params = new URLSearchParams(window.location.search);
+            return params.get('userId');
+        }
+
+        function renderReport(cases) {
+            reportTableBody.innerHTML = ''; 
+            if (cases.length === 0) {
+                noDataMessage.classList.remove('hidden');
+            } else {
+                noDataMessage.classList.add('hidden');
+                cases.sort((a, b) => new Date(b.fecha_actuacion) - new Date(a.fecha_actuacion));
+                
+                cases.forEach(caseData => {
+                    const row = document.createElement('tr');
+                    row.className = "hover:bg-gray-50 transition-colors";
+                    
+                    let mediaCellContent = '<span class="text-gray-400">No</span>';
+                    if (caseData.multimedia_url) {
+                        // Si es base64, mostrar como imagen/video
+                        if (caseData.multimedia_url.startsWith('data:')) {
+                            if (caseData.multimedia_url.startsWith('data:image')) {
+                                mediaCellContent = `<button onclick="showImageModal('${caseData.multimedia_url}')" class="text-indigo-600 hover:text-indigo-800 font-medium">Ver Imagen</button>`;
+                            } else if (caseData.multimedia_url.startsWith('data:video')) {
+                                mediaCellContent = `<button onclick="showVideoModal('${caseData.multimedia_url}')" class="text-indigo-600 hover:text-indigo-800 font-medium">Ver Video</button>`;
+                            } else {
+                                mediaCellContent = `<span class="text-green-600 font-medium">Archivo</span>`;
+                            }
+                        } else {
+                            // Si es URL externa
+                            mediaCellContent = `<a href="${caseData.multimedia_url}" target="_blank" rel="noopener noreferrer" class="text-indigo-600 hover:text-indigo-800 font-medium">Ver Prueba</a>`;
+                        }
+                    }
+
+                    row.innerHTML = `
+                        <td class="table-cell text-sm">${caseData.fecha_actuacion || ''}</td>
+                        <td class="table-cell text-sm font-medium text-gray-900">${caseData.nombre_causa || ''}</td>
+                        <td class="table-cell text-sm">${caseData.intervenidos || ''}</td>
+                        <td class="table-cell text-sm">${caseData.encargados || ''}</td>
+                        <td class="table-cell text-sm">${caseData.observaciones || ''}</td>
+                        <td class="table-cell text-sm">${mediaCellContent}</td>
+                    `;
+                    reportTableBody.appendChild(row);
+                });
+            }
+        }
+
+        async function startReport() {
+            const reportUserId = getUserIdFromUrl();
+
+            if (!reportUserId) {
+                mainContent.classList.add('hidden');
+                errorMessage.classList.remove('hidden');
+                reportUserInfo.textContent = 'ID no especificado';
+                return;
+            }
+
+            reportUserInfo.textContent = reportUserId;
+            
+            // Cargar datos iniciales
+            await loadReportData(reportUserId);
+            
+            // Configurar suscripción en tiempo real
+            const subscription = supabase
+                .channel('report_interventions')
+                .on('postgres_changes', {
+                    event: '*',
+                    schema: 'public',
+                    table: 'intervenciones',
+                    filter: `user_id=eq.${reportUserId}`
+                }, () => {
+                    loadReportData(reportUserId);
+                })
+                .subscribe();
+        }
+
+        async function loadReportData(userId) {
+            try {
+                const { data: cases, error } = await supabase
+                    .from('intervenciones')
+                    .select('*')
+                    .eq('user_id', userId)
+                    .order('fecha_actuacion', { ascending: false });
+
+                if (error) throw error;
+                renderReport(cases || []);
+            } catch (error) {
+                console.error("Error al obtener los datos:", error);
+                reportUserInfo.textContent = `Error al cargar datos para ${userId}`;
+                noDataMessage.textContent = "No se pudieron cargar los datos. Verifique el ID de usuario y los permisos.";
+                noDataMessage.classList.remove('hidden');
+            }
+        }
+
+        // Función para mostrar imágenes en modal
+        function showImageModal(base64) {
+            const modal = document.createElement('div');
+            modal.className = 'fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50';
+            modal.innerHTML = `
+                <div class="max-w-4xl max-h-4xl p-4">
+                    <img src="${base64}" class="max-w-full max-h-full object-contain rounded-lg">
+                    <button onclick="this.parentElement.parentElement.remove()" class="absolute top-4 right-4 text-white bg-gray-800 rounded-full p-2 hover:bg-gray-700">
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                        </svg>
+                    </button>
+                </div>
+            `;
+            document.body.appendChild(modal);
+        }
+
+        // Función para mostrar videos en modal
+        function showVideoModal(base64) {
+            const modal = document.createElement('div');
+            modal.className = 'fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50';
+            modal.innerHTML = `
+                <div class="max-w-4xl max-h-4xl p-4">
+                    <video controls class="max-w-full max-h-full rounded-lg">
+                        <source src="${base64}">
+                    </video>
+                    <button onclick="this.parentElement.parentElement.remove()" class="absolute top-4 right-4 text-white bg-gray-800 rounded-full p-2 hover:bg-gray-700">
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                        </svg>
+                    </button>
+                </div>
+            `;
+            document.body.appendChild(modal);
+        }
+
+        // Función que verifica la contraseña
+        function checkPassword() {
+            if (passwordInput.value === CORRECT_PASSWORD) {
+                sessionStorage.setItem('app_password_entered_reporte', 'true');
+                passwordOverlay.style.display = 'none';
+                appContent.style.display = 'block';
+                startReport();
+            } else {
+                passwordError.style.display = 'block';
+            }
+        }
+
+        // Punto de entrada principal al cargar la página
+        document.addEventListener('DOMContentLoaded', () => {
+            // Si la contraseña ya fue ingresada en esta sesión, inicia la app directamente.
+            if (sessionStorage.getItem('app_password_entered_reporte') === 'true') {
+                passwordOverlay.style.display = 'none';
+                appContent.style.display = 'block';
+                startReport();
+            }
+
+            // Asigna los eventos de la contraseña.
+            passwordSubmit.addEventListener('click', checkPassword);
+            passwordInput.addEventListener('keypress', function(e) {
+                if (e.key === 'Enter') {
+                    checkPassword();
+                }
+            });
+        });
+
+        // Hacer las funciones globales para los modales
+        window.showImageModal = showImageModal;
+        window.showVideoModal = showVideoModal;
+    </script>
+</body>
+</html>
